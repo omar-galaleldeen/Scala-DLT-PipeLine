@@ -38,3 +38,4 @@ database/
 
 # large file
 src/main/resources/TRX10M.csv
+src/main/resources/TRX1M.csv
