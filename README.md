@@ -1,5 +1,7 @@
 # DLT PipeLine for a Retail Discount Rules Engine.
+
 Created a Scalable, parallel processing, Declarative Pipeline in vanilla Scala capable of handling millions of transaction in parallel using pure functional programming.
+
 ---
 
 ## Problem Statement
@@ -12,7 +14,7 @@ A large retail store requires a rule-based engine that automatically qualifies o
 
 All versions of this project follow these rules:
 
-- **No `var`s** — only `val` allowed
+- **No `var`** — only `val` allowed
 - **No mutable data structures** — immutable collections only
 - **No loops** — only recursion and higher-order functions (`map`, `flatMap`, `foldLeft`, etc.)
 - **Pure functions** — output depends solely on input, no side effects, total functions
@@ -24,17 +26,20 @@ All versions of this project follow these rules:
 
 | Qualifying Rule | Calculation |
 |----------------|-------------|
-| Less than 30 days to expiry (from transaction date) | `(30 - daysRemaining)%` — e.g. 29 days → 1%, 28 days → 2% |
-| Product is Cheese | 10% |
-| Product is Wine | 5% |
-| Sold on March 23rd | 50% |
-| Quantity 6–9 units | 5% |
-| Quantity 10–14 units | 7% |
-| Quantity 15+ units | 10% |
-| Sold through App channel | Quantity rounded up to nearest multiple of 5, capped at 25% |
-| Payment via Visa | 5% |
+| __Expiry Data__: Less than 30 days to expiry (from transaction date) | `(30 - daysRemaining)%` — e.g. 29 days → 1%, 28 days → 2% |
+| __Product Category__:  Cheese & Wine | 10% & 5% respectively |
+| __Lucky Date__: Sold on March 23rd | 50% |
+| __Bulk Purchase__: Quantity 6–9 units | 5% |
+| __Bulk Purchase__: Quantity 10–14 units | 7% |
+| __Bulk Purchase__: Quantity 15+ units | 10% |
+| __App Promo__: Sold through App channel | Quantity rounded up to nearest multiple of 5, capped at 25% |
+| __Card Promo__: Payment via Visa | 5% |
 
-**Final discount:** Top 2 qualifying discounts are averaged. If no discount qualifies, the order gets 0%.
+---
+
+## Final Discount: 
+
+Top 2 qualifying discounts are averaged. If no discount qualifies, the order gets 0%.
 
 ---
 
@@ -126,8 +131,11 @@ def writeToDb(orders: List[Order]): Try[Unit] = Try {
 }
 ```
 
-**What improved:** error handling, structured logging, database persistence
-**What it still lacks:** no parallelism, SQLite (single-writer), all data in memory
+**What improved:** 
+- error handling, structured logging, database persistence.
+
+**What it still lacks:** 
+- no parallelism, SQLite (single-writer), all data in memory
 
 ---
 
@@ -156,8 +164,11 @@ def discountVisa(order: Order): Double = {
 }
 ```
 
-**What improved:** 2 new discount rules added to the scalable rules list
-**What it still lacks:** no parallelism, no connection pooling, all data in memory
+**What improved:** 
+- 2 new discount rules added to the scalable rules list.
+
+**What it still lacks:** 
+- no parallelism, no connection pooling, all data in memory.
 
 ---
 
@@ -210,8 +221,11 @@ def insertBatch(conn: Connection, batch: List[Order]): Unit = {
 }
 ```
 
-**What improved:** parallelism, PostgreSQL, batched inserts, timed logging, credentials hidden in `.env`
-**What it still lacks:** entire file still loaded into memory — breaks at 10M rows
+**What improved:** 
+- parallelism, PostgreSQL, batched inserts, timed logging, credentials hidden in `.env`.
+
+**What it still lacks:** 
+- entire file still loaded into memory — breaks at 10M rows
 
 ---
 
@@ -261,7 +275,8 @@ def writeChunkToDb(orders: List[Order], chunkNum: Int): Try[Unit] = Try {
 }
 ```
 
-**What improved:** handles 10M+ rows without running out of memory, per-chunk connection management, granular progress logging
+**What improved:** 
+- Handles 10M+ rows without running out of memory, per-chunk connection management, granular progress logging
 
 ---
 
@@ -369,4 +384,4 @@ TIMESTAMP   LOGLEVEL   MESSAGE
 
 ---
 
-*Project by: Omar Galal El-Deen — ITI Data Management Track, Functional Programming in Scala*
+__Project by:__ Omar Galal El-Deen - ITI Data Management Track, Functional Programming in Scala.
