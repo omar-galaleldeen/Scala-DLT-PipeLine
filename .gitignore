@@ -1,0 +1,37 @@
+# Dependencies (Folders containing external libraries)
+
+
+# Build outputs (Generated code)
+dist/
+build/
+target/
+*.exe
+*.dll
+
+# Environment & Secrets
+.env
+.env.local
+config/secrets.yml
+
+# IDE files (Editor configs)
+.vscode/
+.idea/
+*.swp
+*.swo
+*.bsp
+*.idea
+*~
+
+# OS generated files
+.DS_Store (Mac)
+Thumbs.db (Windows)
+desktop.ini
+
+# Logs
+*.log
+logs/
+
+# database files
+*.sqlite
+*.db   
+database/
