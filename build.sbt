@@ -15,5 +15,7 @@ libraryDependencies ++= Seq(
     "org.apache.spark" %% "spark-sql" % "3.4.0",
 )
 testFrameworks += new TestFramework("munit.Framework")
-libraryDependencies += "org.xerial" % "sqlite-jdbc" % "3.43.0.0"
+//libraryDependencies += "org.xerial" % "sqlite-jdbc" % "3.43.0.0"
+libraryDependencies += "org.postgresql" % "postgresql" % "42.7.3" // changed to postgres for higher scale writes.
+libraryDependencies += "io.github.cdimascio" % "dotenv-java" % "2.3.2" //to be used to read the .env file
 
