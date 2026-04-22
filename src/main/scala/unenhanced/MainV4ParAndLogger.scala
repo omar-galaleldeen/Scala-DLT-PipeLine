@@ -1,4 +1,4 @@
-package Pipeline
+package unenhanced
 
 import io.github.cdimascio.dotenv.Dotenv
 
@@ -10,7 +10,7 @@ import scala.collection.parallel.CollectionConverters._
 import scala.io.{Codec, Source}
 import scala.util.{Failure, Success, Try}
 
-object Main extends App {
+object MainV4ParAndLogger extends App {
 
   // Configuration Variables
   val separator = ","
@@ -24,8 +24,9 @@ object Main extends App {
 
   // file paths:
   //val ordersFilePath = "src/main/resources/TRX1000.csv"   // sample
-  //val ordersFilePath = "src/main/resources/TRX1M.csv"     // 1 million rows
-  val ordersFilePath = "src/main/resources/TRX10M.csv"     // 10 million rows
+  val ordersFilePath = "src/main/resources/TRX1M.csv"     // 1 million rows
+  //val ordersFilePath = "src/main/resources/TRX10M.csv"     // 10 million rows
+
   val logPath = "logs/rules_engine.log"
   val envFile = ".env"
 
@@ -37,9 +38,8 @@ object Main extends App {
   val dbPass = dotenv.get("DB_PASS")
 
   // Business variables
-  val nAvg      = 2         // number of top discounts to average
-  val chunkSize = 1000000   // number of rows per chunk (1M) — processed sequentially
-  val batchSize = 100000    // number of rows per DB commit
+  val nAvg      = 2       // number of top discounts to average
+  val batchSize = 100000   // number of rows per DB batch insert
 
   // Initializing
   new File("logs").mkdirs() // create logs folder if it doesn't exist
@@ -60,7 +60,7 @@ object Main extends App {
       discounts:  List[Double], // a list of all the calculated discounts
       discount:   Double,       // the final discount after averaging
       finalPrice: Double        // = totalPrice - finalDiscount
-    )
+      )
 
   // ============================================================
   // LOGGING
@@ -71,14 +71,14 @@ object Main extends App {
     val fw = new BufferedWriter(new FileWriter(logPath, true)) // append mode
     fw.write(logLine)
     fw.close()
-    println(s"${Instant.now()} $level $message")              // also print to console
+    println(s"${Instant.now()} $level $message")             // also print to console
   }
 
   // helper to time and log how long a step takes
   def timed[A](stepName: String)(block: => A): A = {
-    val start   = System.currentTimeMillis()
+    val start  = System.currentTimeMillis()
     log("INFO", s"$stepName — started")
-    val result  = block
+    val result = block
     val elapsed = (System.currentTimeMillis() - start) / 1000.0
     log("INFO", s"$stepName — finished in ${elapsed}s")
     result
@@ -110,13 +110,13 @@ object Main extends App {
     )
   }
 
-  // read file as a lazy iterator — does NOT load all lines into memory at once
+  // read file incrementally
   def readFile(fileName: String, codec: String = Codec.default.toString): Try[Iterator[String]] =
     Try(Source.fromFile(fileName, codec).getLines().drop(1))  // drop header
 
-// ============================================================
-// DISCOUNT RULES
-// ============================================================
+  // ============================================================
+  // DISCOUNT RULES
+  // ============================================================
 
   // Expiry days discount: < 30 days remaining -> (30 - days)% discount
   def discountExpiry(order: Order): Double = {
@@ -169,9 +169,9 @@ object Main extends App {
     }
   }
 
-// ============================================================
-// RULE LIST
-// ============================================================
+  // ============================================================
+  // RULE LIST
+  // ============================================================
   // add new rules here as you scale the pipeline
   val rules: List[Order => Double] = List(
     discountExpiry,
@@ -226,7 +226,7 @@ object Main extends App {
       """INSERT INTO orders
         |(timestamp, name, expiry_date, qty, unit_price, total_price, channel, pay_method, discount, final_price)
         |VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""".stripMargin
-    val stmt: PreparedStatement = conn.prepareStatement(sql)  // prepare once per batch
+    val stmt: PreparedStatement = conn.prepareStatement(sql)  // prepare ONCE per batch
     batch.foreach { order =>
       stmt.setString(1, order.timeStamp.toString)
       stmt.setString(2, order.name)
@@ -240,33 +240,28 @@ object Main extends App {
       stmt.setDouble(10, order.finalPrice)
       stmt.addBatch()   // queue the row instead of executing immediately
     }
-    stmt.executeBatch() // execute all rows in one batch
+    stmt.executeBatch() // execute all rows in one shot
     stmt.close()
   }
 
-  // write a chunk of orders to DB — one connection per chunk, committing every batchSize rows
-  def writeChunkToDb(orders: List[Order], chunkNum: Int): Try[Unit] = Try {
+  // write all orders to the database in batches for performance
+  def writeToDb(orders: List[Order]): Try[Unit] = Try {
     val conn = DriverManager.getConnection(dbUrl, dbUser, dbPass)
     initDb(conn)
-    conn.setAutoCommit(false)
-    orders
-      .grouped(batchSize)
-      .zipWithIndex
-      .foreach { case (batch, batchNum) =>
-        insertBatch(conn, batch)
-        conn.commit()
-        log(
-          "INFO",
-          s"Chunk $chunkNum — committed batch $batchNum (${(batchNum + 1) * batchSize} rows so far)"
-        )
-      }
-
+    conn.setAutoCommit(false)                         // disable auto commit
+    var batchNum = 0
+    orders.grouped(batchSize).foreach { batch =>
+      insertBatch(conn, batch)
+      conn.commit()                                   // commit every batch
+      batchNum += 1
+      log("INFO", s"DB — committed batch $batchNum (${batchNum * batchSize} rows so far)")
+    }
     conn.close()
   }
 
-  // ============================================================
-  // PIPELINE
-  // ============================================================
+// ============================================================
+// PIPELINE
+// ============================================================
   log("INFO", "Rules engine started")
   log("INFO", s"Processing file: $ordersFilePath")
 
@@ -277,41 +272,34 @@ object Main extends App {
     case Success(lines) =>
       log("INFO", s"File opened successfully: $ordersFilePath")
 
-      timed("Full pipeline") {
-        lines
-          .grouped(chunkSize)                              // read 1M rows at a time — lazy, low memory
-          .zipWithIndex                                    // track chunk number for logging
-          .foreach { case (chunk, chunkIdx) =>
-
-            val chunkNum = chunkIdx + 1
-            log("INFO", s"Chunk $chunkNum — started")
-
-            // parse lines — skip any that fail
-            val orders = timed(s"Chunk $chunkNum — parsing") {
-              chunk.toList                                 // materialize 1M rows into memory
-                .par                                      // parallelize across CPU cores
-                .flatMap { line =>
-                  lineToOrder(line) match {
-                    case Success(order) => Some(order)
-                    case Failure(e)     =>
-                      log("WARN", s"Chunk $chunkNum — failed to parse line: $line — ${e.getMessage}")
-                      None
-                  }
-                }
-                .map(order => applyRules(order, rules))   // apply all discount rules in parallel
-                .map(order => calcFinalDiscount(order))   // calculate final discount in parallel
-                .toList                                   // back to List for DB write
-            }
-            log("INFO", s"Chunk $chunkNum — parsed and processed ${orders.length} orders")
-
-            // write chunk to DB — one connection per chunk, commits every 100K rows
-            timed(s"Chunk $chunkNum — writing to DB") {
-              writeChunkToDb(orders, chunkNum) match {
-                case Success(_) => log("INFO", s"Chunk $chunkNum — successfully wrote ${orders.length} orders to $dbUrl")
-                case Failure(e) => log("ERROR", s"Chunk $chunkNum — failed to write: ${e.getMessage}")
-              }
-            }
+      // parse lines lazily in chunks — avoids loading 10M rows into memory
+      val orders = timed("Parsing") {
+        lines.flatMap { line =>
+          lineToOrder(line) match {
+            case Success(order) => Some(order)
+            case Failure(e)     =>
+              log("WARN", s"Failed to parse line: $line — ${e.getMessage}")
+              None
           }
+        }.toList  // collect after lazy parsing
+      }
+      log("INFO", s"Parsed ${orders.length} orders successfully")
+
+      // apply discount rules in parallel across all CPU cores
+      val ordersDeducted = timed("Applying discount rules") {
+        orders
+          .par
+          .map(order => applyRules(order, rules))
+          .map(order => calcFinalDiscount(order))
+          .toList
+      }
+
+      // write to database in batches
+      timed("Writing to database") {
+        writeToDb(ordersDeducted) match {
+          case Success(_) => log("INFO", s"Successfully wrote ${ordersDeducted.length} orders to $dbUrl")
+          case Failure(e) => log("ERROR", s"Failed to write to database: ${e.getMessage}")
+        }
       }
   }
 
